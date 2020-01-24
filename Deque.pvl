@@ -1,0 +1,282 @@
+// -*- tab-width:2 ; indent-tabs-mode:nil -*-
+//:: cases DequeTest
+//:: tools silicon
+//:: verdict Pass
+class Deque {
+  /* ghost */ int size;
+
+  Task[] tasks;
+
+  int qhead;
+  AtomicInteger qtail;
+  int qsplit;
+  int oqsplit;
+  boolean allstolen;
+  boolean oallstolen;
+  boolean moveqsplit;
+
+
+  resource PArray(frac p) =
+    Value(tasks) ** tasks != null ** Value(size) **
+    (\forall* int j; 0 <= j && j < size; Perm(tasks[j], p));
+
+  resource PIArray(int i, frac p) =
+    Value(tasks) ** tasks != null ** Perm(tasks[i], p);
+
+  resource AllowSteal() =
+    Value(qsplit) **
+    Value(allstolen) **
+    Perm(moveqsplit, 1) **
+    Value(qtail) ** qtail != null ** Value(qtail.val);
+
+  resource Update() =
+    Perm(qsplit, 1) ** Perm(oqsplit, 1) **
+    Value(qtail) ** qtail != null ** Value(qtail.val) **
+    Perm(allstolen, 1) ** Perm(oallstolen, 1) **
+    Perm(moveqsplit, 1);
+
+  requires size > 0;
+
+  ensures Value(this.size) ** this.size == size;
+  ensures PArray(write);
+  ensures unfolding PArray(write) in (tasks.length == size ** (\forall int j; 0 <= j && j < size; tasks[j] == null));
+  ensures Value(qtail) ** Value(qtail.val) ** qtail.val == 0;
+  ensures Value(qhead) ** qhead == 0;
+  ensures Value(qsplit) ** qsplit == 0;
+  ensures Value(oqsplit) ** oqsplit == 0;
+  ensures Value(allstolen) ** !allstolen;
+  ensures Value(oallstolen) ** !oallstolen;
+  ensures Value(moveqsplit) ** !moveqsplit;
+
+  Deque(int size) {
+    tasks = new Task[size];
+    qtail = new AtomicInteger(0);
+    qhead = 0;
+    qsplit = 0;
+    oqsplit = 0;
+    allstolen = false;
+    oallstolen = false;
+    moveqsplit = false;
+    this.size = size;
+    fold PArray(write);
+  }
+
+
+  context AllowSteal();
+
+  requires Value(qhead);
+
+  ensures (\result != null) ==> (Perm(\result.thief, 1) ** \result.Correct());
+
+  Task steal() {
+    unfold AllowSteal();
+    Task task = null;
+
+    if (!allstolen) {
+      int t = qtail.take();
+      int s = qsplit;
+
+      if (t < s) {
+        if (qtail.compareAndSwap(t, t + 1) && qsplit == s) {
+          assert t < qhead; // task exists
+          assert t < qsplit; // task is shared
+          unfold PIArray(t, read);
+          task = tasks[t];
+          fold PIArray(t, read);
+        }
+      } else if (!moveqsplit) {
+        moveqsplit = true;
+      }
+    }
+
+    fold AllowSteal();
+    return task;
+  }
+
+  context Value(size);
+  context Perm(qhead, 1);
+  context Update();
+
+  requires t != null;
+  context t.Correct();
+
+  requires (0 <= qhead && qhead < size);
+  requires PIArray(qhead, write);
+
+  ensures qhead == \old(qhead) + 1;
+  ensures (0 < qhead && qhead <= size);
+  ensures PIArray(\old(qhead), write);
+  ensures unfolding PIArray(\old(qhead), write) in (tasks[\old(qhead)] == t);
+
+  boolean push(Task t) {
+    unfold PIArray(qhead, write);
+    tasks[qhead] = t;
+    fold PIArray(qhead, write);
+
+    unfold Update();
+
+    qhead++;
+
+    if (oallstolen) {
+      qtail.put(qhead - 1);
+      qsplit = qhead;
+      oqsplit = qhead;
+      allstolen = false;
+      oallstolen = false;
+
+      assert (qsplit <= qhead && qtail.val <= qsplit); // not all tasks are stolen
+
+      if (moveqsplit) {
+        moveqsplit = false;
+      }
+    } else if (moveqsplit) {
+      int newSplit = (oqsplit + qhead + 1) / 2;
+      qsplit = newSplit;
+      oqsplit = newSplit;
+      moveqsplit = false;
+    }
+
+    fold Update();
+    return true;
+  }
+
+
+  context Perm(qhead, 1);
+  context Value(tasks) ** tasks != null ** Value(size);
+
+  requires (0 < qhead && qhead <= size);
+
+  ensures (0 <= qhead && qhead < size);
+  ensures (qhead == \old(qhead) - 1);
+
+  void pop() {
+    qhead--;
+  }
+
+
+  context Perm(qhead, 1);
+  context Value(tasks) ** tasks != null ** Value(size);
+  context Update();
+
+  requires (0 < qhead && qhead <= size);
+
+  ensures (0 <= qhead && qhead < size);
+  ensures (qhead == \old(qhead) - 1);
+  ensures unfolding Update() in oallstolen;
+
+  void popStolen() {
+    qhead--;
+
+    unfold Update();
+    if (!oallstolen) {
+      allstolen = true;
+      oallstolen = true;
+    }
+    fold Update();
+  }
+
+
+  context_everywhere Value(tasks) ** tasks != null ** Value(size);
+
+  context Perm(qhead, 1);
+  context Update();
+  context (0 < qhead && qhead <= size);
+  context PIArray(qhead - 1, 1\2);
+
+  requires Value(tasks[qhead - 1]);
+  requires tasks[qhead - 1].Correct();
+  requires Value(tasks[qhead - 1].thief);
+  requires Value(tasks[qhead - 1].thief.deque) ** tasks[qhead - 1].thief.deque != null;
+  requires Value(tasks[qhead - 1].thief.deque.qhead);
+  requires tasks[qhead - 1].thief.deque.AllowSteal();
+
+  ensures Value(\result.task) ** Value(\result.stolen);
+  ensures \result.task.Correct();
+  ensures unfolding PIArray(qhead - 1, 1\2) in (\result.task == tasks[qhead - 1]);
+
+  ensures \result.stolen ==> (
+    Value(\result.task.thief) **
+    Value(\result.task.thief.deque) ** \result.task.thief.deque != null ** Value(\result.task.thief.deque.qhead) **
+    \result.task.thief.deque.AllowSteal()
+  );
+
+  Status peek() {
+    unfold PIArray(qhead - 1, 1\2);
+    Task task = tasks[qhead - 1];
+    fold PIArray(qhead - 1, 1\2);
+
+    unfold Update();
+
+    if (oallstolen) {
+      fold Update();
+      return new Status(true, task);
+    }
+
+    if (oqsplit == qhead) {
+      fold Update();
+      if (!shrinkShared()) {
+        unfold Update();
+        allstolen = true;
+        oallstolen = true;
+        fold Update();
+        return new Status(true, task);
+      }
+    } else {
+      fold Update();
+    }
+
+    unfold Update();
+
+    if (moveqsplit) {
+      int newSplit = (oqsplit + qhead) / 2;
+      qsplit = newSplit;
+      oqsplit = newSplit;
+      moveqsplit = false;
+    }
+
+    fold Update();
+    return new Status(false, task);
+  }
+
+
+  context Update();
+  context Perm(qhead, 1);
+
+  ensures qhead == \old(qhead);
+
+  requires unfolding Update() in (qhead == oqsplit);
+
+  boolean shrinkShared() {
+    unfold Update();
+
+    int t = qtail.take();
+    int s = qsplit;
+
+    if (t == s) {
+      fold Update();
+      return false;
+    }
+
+    int newS = (t + s) / 2;
+
+    qsplit = newS;
+    oqsplit = newS;
+    // TODO memory fence
+    t = qtail.take();
+
+    if (t == s) {
+      fold Update();
+      return false;
+    }
+
+    if (t > newS) {
+      newS = (t + s) / 2;
+      qsplit = newS;
+      oqsplit = newS;
+    }
+
+    fold Update();
+    return true;
+  }
+
+}

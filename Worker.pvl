@@ -1,0 +1,165 @@
+// -*- tab-width:2 ; indent-tabs-mode:nil -*-
+//:: cases WorkerTest
+//:: tools silicon
+//:: verdict Pass
+class Worker {
+  Deque deque;
+
+  Worker victim;
+  Task root;
+  int ident;
+
+
+  requires ident >= 0;
+  requires size > 0;
+  requires root != null;
+
+  ensures Value(this.root) ** this.root == root;
+  ensures Value(this.ident) ** this.ident == ident;
+  ensures Value(deque) ** Value(deque.size) ** deque.size == size;
+
+  Worker(Task root, int ident, int size) {
+    this.root = root;
+    this.ident = ident;
+    deque = new Deque(size);
+  }
+
+
+  requires victim != null;
+  requires Perm(this.victim, 1);
+
+  context Value(victim.ident) ** Value(ident) ** victim.ident != ident;
+
+  ensures Value(this.victim) ** this.victim == victim;
+
+  void setVictim(Worker victim) {
+    this.victim = victim;
+  }
+
+
+  context Value(root) ** root != null;
+  context root.Correct();
+  context Value(root.done);
+
+  requires Value(ident);
+  requires (ident != 0) ==>
+  (
+    Value(victim) ** victim != null **
+    Value(victim.deque) ** victim.deque != null ** Value(victim.deque.qhead) **
+    victim.deque.AllowSteal()
+  );
+
+  ensures unfolding root.Correct() in root.done;
+
+  void run() {
+    if (ident == 0) {
+      root.execute();
+    } else {
+
+      loop_invariant Value(root) ** Value(root.done);
+      loop_invariant Value(victim) ** victim != null;
+      loop_invariant Value(victim.deque) ** victim.deque != null ** Value(victim.deque.qhead);
+      loop_invariant victim.deque.AllowSteal();
+
+      while (!root.done) {
+        stealAndRun(victim);
+      }
+    }
+
+    unfold root.Correct();
+    assert root.done;
+    assert root.result == root.expected;
+    fold root.Correct();
+  }
+
+
+  context Value(deque) ** Value(deque.size);
+  context Perm(deque.qhead, 1);
+  context deque.Update();
+
+  requires t != null;
+  context t.Correct();
+  requires (0 <= deque.qhead && deque.qhead < deque.size);
+  requires deque.PIArray(deque.qhead, write);
+  requires unfolding t.Correct() in (t.expected == t.fib(t.n));
+
+  ensures deque.qhead == \old(deque.qhead) + 1;
+  ensures (0 <= deque.qhead && deque.qhead <= deque.size);
+  ensures deque.PIArray(\old(deque.qhead), write);
+  ensures unfolding deque.PIArray(\old(deque.qhead), write) in (deque.tasks[\old(deque.qhead)] == t);
+
+  void spawn(Task t) {
+    deque.push(t);
+  }
+
+
+  context_everywhere Value(deque) ** Value(deque.tasks) ** deque.tasks != null ** Value(deque.size);
+
+  requires Perm(deque.qhead, 1);
+  requires deque.Update();
+  requires (0 < deque.qhead && deque.qhead <= deque.size);
+  requires deque.PIArray(deque.qhead - 1, 1\2);
+
+  requires Value(deque.tasks[deque.qhead - 1]);
+  requires deque.tasks[deque.qhead - 1].Correct();
+  requires Value(deque.tasks[deque.qhead - 1].thief);
+  requires Value(deque.tasks[deque.qhead - 1].thief.deque) ** deque.tasks[deque.qhead - 1].thief.deque != null;
+  requires Value(deque.tasks[deque.qhead - 1].thief.deque.qhead);
+  requires deque.tasks[deque.qhead - 1].thief.deque.AllowSteal();
+
+  ensures Value(deque.qhead);
+  ensures (0 <= deque.qhead && deque.qhead < deque.size);
+
+  int sync() {
+    Status status = deque.peek();
+    Task task = status.task;
+
+    if (!status.stolen) {
+      deque.pop();
+      task.execute();
+
+      unfold task.Correct();
+
+    } else {
+
+      loop_invariant Value(task.thief);
+
+      while (task.thief == null) {}
+
+      unfold task.Correct();
+
+      loop_invariant Value(task.done) ** Value(task.thief);
+      loop_invariant Value(task.thief.deque) ** task.thief.deque != null ** Value(task.thief.deque.qhead);
+      loop_invariant task.thief.deque.AllowSteal();
+
+      while (!task.done) {
+        stealAndRun(task.thief);
+      }
+
+      deque.popStolen();
+    }
+
+    assert task.done;
+    int res = task.result;
+    assert task.result == task.expected;
+    fold task.Correct();
+
+    return res;
+  }
+
+
+  requires w != null;
+
+  context Value(w.deque) ** w.deque != null ** Value(w.deque.qhead);
+  context w.deque.AllowSteal();
+
+  void stealAndRun(Worker w) {
+    Task task = w.deque.steal();
+
+    if (task != null) {
+      task.thief = this;
+      task.execute();
+    }
+  }
+
+}

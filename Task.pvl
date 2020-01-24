@@ -1,0 +1,53 @@
+// -*- tab-width:2 ; indent-tabs-mode:nil -*-
+//:: cases TaskTest
+//:: tools silicon
+//:: verdict Pass
+class Task {
+  Worker thief;
+  boolean done;
+  int result;
+  int expected;
+  int n;
+
+
+  static pure int fib(int n) = n < 2 ? 1 : fib(n - 1) + fib(n - 2);
+
+
+  resource Correct() = Value(done) ** Value(n) ** Value(result) ** Value(expected) ** (done ==> (expected == result));
+
+  resource lock_invariant() = Perm(done, 1) ** Perm(result, 1);
+
+
+  requires n >= 0;
+
+  ensures Correct();
+  ensures unfolding Correct() in (!done ** result == 0 ** this.n == n ** expected == fib(n));
+  ensures Perm(thief, 1);
+
+  Task(int n) {
+    lock this;
+    result = 0;
+    expected = fib(n);
+    done = false;
+    this.n = n;
+    unlock this;
+    fold Correct();
+  }
+
+
+  context Correct();
+
+  ensures unfolding Correct() in (done ** result == fib(n) ** \result == result);
+
+  int execute() {
+    unfold Correct();
+    lock this;
+    result = fib(n);
+    int res = result;
+    done = true;
+    unlock this;
+    fold Correct();
+    return res;
+  }
+
+}

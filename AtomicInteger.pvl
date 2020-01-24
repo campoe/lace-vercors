@@ -1,0 +1,99 @@
+// -*- tab-width:2 ; indent-tabs-mode:nil -*-
+//:: cases AtomicIntegerTest
+//:: tools silicon
+//:: verdict Pass
+class AtomicInteger {
+  int val;
+
+
+  resource lock_invariant() = Perm(val, 1);
+
+
+  ensures Value(val) ** val == v;
+
+  AtomicInteger(int v) {
+    lock this;
+    val = v;
+    unlock this;
+  }
+
+
+  context Value(val);
+
+  ensures val == \old(val) ** \result == val;
+
+  int take() {
+    return val;
+  }
+
+
+  context Value(val);
+
+  ensures val == v;
+
+  void put(int v) {
+    lock this;
+    val = v;
+    unlock this;
+  }
+
+
+  requires Value(val);
+
+  int getAndIncrement() {
+    int res = val;
+    boolean cas = false;
+
+    loop_invariant Value(val);
+
+    while(!cas) {
+      cas = compareAndSwap(res, res + 1);
+      if (!cas) {
+        res = val;
+      }
+    }
+
+    return res;
+  }
+
+
+  requires Value(val);
+
+  int getAndDecrement() {
+    int res = val;
+    boolean cas = false;
+
+    loop_invariant Value(val);
+
+    while(!cas) {
+      cas = compareAndSwap(res, res - 1);
+      if (!cas) {
+        res = val;
+      }
+    }
+
+    return res;
+  }
+
+
+  context Value(val);
+
+  ensures \result ==> (val == update);
+  ensures !\result ==> (val == \old(val));
+
+  boolean compareAndSwap(int expect, int update) {
+    boolean res;
+    lock this;
+
+    if (val == expect) {
+      val = update;
+      res = true;
+    } else {
+      res = false;
+    }
+
+    unlock this;
+    return res;
+  }
+
+}

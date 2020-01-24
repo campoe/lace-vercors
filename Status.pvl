@@ -1,0 +1,20 @@
+// -*- tab-width:2 ; indent-tabs-mode:nil -*-
+//:: cases StatusTest
+//:: tools silicon
+//:: verdict Pass
+class Status {
+  boolean stolen;
+  Task task;
+
+
+  requires task != null;
+
+  ensures Value(this.stolen) ** this.stolen == stolen;
+  ensures Value(this.task) ** this.task == task;
+
+  Status(boolean stolen, Task task) {
+    this.stolen = stolen;
+    this.task = task;
+  }
+
+}
